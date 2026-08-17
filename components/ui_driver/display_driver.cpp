@@ -6,6 +6,7 @@
 
 #include "display_driver.h"
 #include <esp_log.h>
+#include <esp_private/esp_gpio_reserve.h>
 #include <string.h>
 
 static const char *TAG = "display_driver";
@@ -52,25 +53,38 @@ static esp_err_t lcd_init_commands(void)
     uint8_t mac = 0x00;
     lcd_spi_write_data(&mac, 1);
 
-    /* Pixel Format Set — 16 bit */
+    /* Pixel Format Set — 16 bit (RGB565) */
     lcd_spi_write_command(0x3A);
-    uint8_t pixfmt = 0x55;
+    uint8_t pixfmt = 0x05;
     lcd_spi_write_data(&pixfmt, 1);
 
-    /* Column Address Set: 0..171 (172 px) */
-    lcd_spi_write_command(0x2A);
-    uint8_t col[4] = { 0x00, 0x00, 0x00, 0xAB };
-    lcd_spi_write_data(col, 4);
+    /* --- Полная инициализация ST7789 (по Waveshare) --- */
+    uint8_t d;
+    lcd_spi_write_command(0xB0); d = 0x00; lcd_spi_write_data(&d, 1); d = 0xE8; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xB2); uint8_t b2[5] = {0x0C, 0x0C, 0x00, 0x33, 0x33}; lcd_spi_write_data(b2, 5);
+    lcd_spi_write_command(0xB7); d = 0x35; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xBB); d = 0x35; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xC0); d = 0x2C; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xC2); d = 0x01; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xC3); d = 0x13; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xC4); d = 0x20; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xC6); d = 0x0F; lcd_spi_write_data(&d, 1);
+    lcd_spi_write_command(0xD0); uint8_t d0[2] = {0xA4, 0xA1}; lcd_spi_write_data(d0, 2);
+    lcd_spi_write_command(0xD6); d = 0xA1; lcd_spi_write_data(&d, 1);
 
-    /* Row Address Set: 0..319 (320 px) */
-    lcd_spi_write_command(0x2B);
-    uint8_t row[4] = { 0x00, 0x00, 0x01, 0x3F };
-    lcd_spi_write_data(row, 4);
+    /* Гамма-кривые */
+    lcd_spi_write_command(0xE0);
+    uint8_t e0[14] = {0xF0, 0x00, 0x04, 0x04, 0x04, 0x05, 0x29, 0x33, 0x3E, 0x38, 0x12, 0x12, 0x28, 0x30};
+    lcd_spi_write_data(e0, 14);
+    lcd_spi_write_command(0xE1);
+    uint8_t e1[14] = {0xF0, 0x07, 0x0A, 0x0D, 0x0B, 0x07, 0x28, 0x33, 0x3E, 0x36, 0x14, 0x14, 0x29, 0x32};
+    lcd_spi_write_data(e1, 14);
 
     /* Display Inversion On */
     lcd_spi_write_command(0x21);
-    /* Normal Display Mode On */
-    lcd_spi_write_command(0x13);
+    /* Sleep Out */
+    lcd_spi_write_command(0x11);
+    vTaskDelay(pdMS_TO_TICKS(120));
 
     /* Display On */
     lcd_spi_write_command(0x29);
@@ -102,11 +116,11 @@ esp_err_t display_init(void)
     dev_cfg.flags = SPI_DEVICE_HALFDUPLEX;
     ESP_ERROR_CHECK(spi_bus_add_device(LCD_HOST_SPI, &dev_cfg, &spi_handle));
 
-    /* GPIO: DC, RST, BL */
+    /* GPIO: DC, RST (BL управляется через LEDC отдельно) */
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_DISABLE;
     io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << LCD_PIN_DC) | (1ULL << LCD_PIN_RST) | (1ULL << LCD_PIN_BL);
+    io_conf.pin_bit_mask = (1ULL << LCD_PIN_DC) | (1ULL << LCD_PIN_RST);
     io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
     ESP_ERROR_CHECK(gpio_config(&io_conf));
@@ -136,8 +150,9 @@ esp_err_t display_backlight_set(uint8_t brightness)
         .channel    = LEDC_CHANNEL_0,
         .intr_type  = LEDC_INTR_DISABLE,
         .timer_sel  = LEDC_TIMER_0,
-        .duty       = 0,
+        .duty       = brightness,
         .hpoint     = 0,
+        /* .flags.output_invert = 0 */
     };
 
     if (!ledc_initialized) {
@@ -145,16 +160,25 @@ esp_err_t display_backlight_set(uint8_t brightness)
             .speed_mode      = LEDC_LOW_SPEED_MODE,
             .duty_resolution = LEDC_TIMER_8_BIT,
             .timer_num       = LEDC_TIMER_0,
-            .freq_hz         = 5000,
+            .freq_hz         = 1000,
             .clk_cfg         = LEDC_AUTO_CLK,
         };
         ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+        /* Освобождаем GPIO22, если его кто-то зарезервировал */
+        if (esp_gpio_is_reserved(BIT64(LCD_PIN_BL))) {
+            ESP_LOGW(TAG, "GPIO%d was reserved, revoking for LEDC", LCD_PIN_BL);
+            esp_gpio_revoke(BIT64(LCD_PIN_BL));
+        }
+
         ESP_ERROR_CHECK(ledc_channel_config(&ledc_conf));
         ledc_initialized = true;
     }
 
-    ledc_conf.duty = brightness;
-    return ledc_channel_config(&ledc_conf);
+    /* Обновляем duty без повторного конфигурирования пина */
+    ESP_ERROR_CHECK(ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, brightness));
+    ESP_ERROR_CHECK(ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0));
+    return ESP_OK;
 }
 
 /* ---------- Flush callback для LVGL v8 ---------- */
@@ -165,19 +189,24 @@ void display_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *col
     uint16_t h = area->y2 - area->y1 + 1;
     size_t size = w * h * sizeof(lv_color_t);
 
-    /* Column Address Set */
+    uint16_t x1 = area->x1 + LCD_OFFSET_X;
+    uint16_t x2 = area->x2 + LCD_OFFSET_X;
+    uint16_t y1 = area->y1 + LCD_OFFSET_Y;
+    uint16_t y2 = area->y2 + LCD_OFFSET_Y;
+
+    /* Column Address Set (с учётом offset X) */
     lcd_spi_write_command(0x2A);
     uint8_t col[4] = {
-        (uint8_t)(area->x1 >> 8), (uint8_t)(area->x1 & 0xFF),
-        (uint8_t)(area->x2 >> 8), (uint8_t)(area->x2 & 0xFF),
+        (uint8_t)(x1 >> 8), (uint8_t)(x1 & 0xFF),
+        (uint8_t)(x2 >> 8), (uint8_t)(x2 & 0xFF),
     };
     lcd_spi_write_data(col, 4);
 
     /* Row Address Set */
     lcd_spi_write_command(0x2B);
     uint8_t row[4] = {
-        (uint8_t)(area->y1 >> 8), (uint8_t)(area->y1 & 0xFF),
-        (uint8_t)(area->y2 >> 8), (uint8_t)(area->y2 & 0xFF),
+        (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF),
+        (uint8_t)(y2 >> 8), (uint8_t)(y2 & 0xFF),
     };
     lcd_spi_write_data(row, 4);
 
@@ -192,6 +221,5 @@ void display_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *col
     };
     spi_device_polling_transmit(spi_handle, &t);
 
-    /* Готово — LVGL может рендерить следующую область */
     lv_disp_flush_ready(drv);
 }

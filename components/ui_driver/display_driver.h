@@ -24,6 +24,10 @@
 #define LCD_WIDTH 172
 #define LCD_HEIGHT 320
 
+/* ST7789 имеет GRAM 240x320, а видимая область 172x320 -> смещение по X */
+#define LCD_OFFSET_X 34
+#define LCD_OFFSET_Y 0
+
 esp_err_t display_init(void);
 esp_err_t display_backlight_set(uint8_t brightness);
 void display_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p);

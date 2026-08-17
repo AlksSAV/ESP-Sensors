@@ -26,6 +26,7 @@ src/CMakeLists.txt
 # Build artifacts (временные логи)
 build_log.txt
 dependencies.lock
+read_log.py
 
 # OS files
 .DS_Store
