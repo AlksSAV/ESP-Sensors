@@ -1,0 +1,36 @@
+# PlatformIO
+.platformio/
+*.o
+*.d
+*.elf
+*.bin
+*.map
+*.sig
+*.a
+*.so
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# SDK config overrides
+sdkconfig*
+
+# Build artifacts
+build/
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# LVGL components (if using submodule)
+components/lvgl/.git
+components/lvgl/docs
+components/lvgl/tests
+components/lvgl/tests/*
+!components/lvgl/tests/test_*

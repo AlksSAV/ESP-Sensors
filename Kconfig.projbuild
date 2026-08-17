@@ -1,0 +1,28 @@
+menu "LVGL Configuration"
+    config LVGL_ENABLE_FULL
+        bool "Enable full LVGL features"
+        default y
+        help
+            Enable all LVGL features
+
+    config LVGL_COLOR_DEPTH
+        int "LVGL color depth"
+        default 16
+        range 1 32
+        help
+            Color depth for LVGL
+
+    config LVGL_TICK_RATE_MIN
+        int "LVGL minimum tick rate (ms)"
+        default 10
+        range 1 100
+        help
+            Minimum tick rate for LVGL
+
+    config LVGL_USING_STATISTICS
+        bool "Using LVGL statistics"
+        default n
+        help
+            Enable LVGL statistics
+
+endmenu

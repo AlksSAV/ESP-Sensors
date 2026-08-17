@@ -1,0 +1,27 @@
+/*
+ * Display Driver for Waveshare ESP32-C6-LCD-1.47
+ * ST7789 LCD controller via SPI
+ * 172x320 resolution
+ */
+
+#pragma once
+
+#include <driver/spi_master.h>
+#include <lvgl.h>
+#include <esp_err.h>
+
+#define LCD_HOST_SPI HSPI_HOST
+#define LCD_PIN_MOSI 6
+#define LCD_PIN_SCLK 7
+#define LCD_PIN_CS 14
+#define LCD_PIN_DC 15
+#define LCD_PIN_RST 21
+#define LCD_PIN_BL 22
+
+#define LCD_BACKLIGHT_BRIGHTNESS 128  // 50% brightness (0-255)
+#define LCD_WIDTH 172
+#define LCD_HEIGHT 320
+
+esp_err_t display_init(void);
+esp_err_t display_backlight_set(uint8_t brightness);
+void display_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map);
