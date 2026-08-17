@@ -8,6 +8,7 @@
 #include "display_driver.h"
 #include <esp_log.h>
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
@@ -20,6 +21,15 @@ static const char *TAG = "lvgl_port";
 
 static lv_color_t *draw_buf1 = NULL;
 static lv_color_t *draw_buf2 = NULL;
+
+/* Тик LVGL — 1 мс через esp_timer */
+static esp_timer_handle_t tick_timer = NULL;
+
+static void lvgl_tick_cb(void *arg)
+{
+    (void)arg;
+    lv_tick_inc(1);
+}
 
 esp_err_t lvgl_port_init(void)
 {
@@ -34,7 +44,14 @@ esp_err_t lvgl_port_init(void)
     /* 2. Инициализация LVGL */
     lv_init();
 
-    /* 3. Выделяем draw buffers (DMA-совместимая память) */
+    /* 3. Тик LVGL: esp_timer каждые 1 мс */
+    esp_timer_create_args_t tick_cfg = {};
+    tick_cfg.callback = lvgl_tick_cb;
+    tick_cfg.name = "lvgl_tick";
+    ESP_ERROR_CHECK(esp_timer_create(&tick_cfg, &tick_timer));
+    ESP_ERROR_CHECK(esp_timer_start_periodic(tick_timer, 1000)); /* 1 мс */
+
+    /* 4. Выделяем draw buffers (DMA-совместимая память) */
     draw_buf1 = (lv_color_t *)heap_caps_malloc(DRAW_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_DMA);
     draw_buf2 = (lv_color_t *)heap_caps_malloc(DRAW_BUF_SIZE * sizeof(lv_color_t), MALLOC_CAP_DMA);
     if (draw_buf1 == NULL || draw_buf2 == NULL) {
@@ -42,7 +59,7 @@ esp_err_t lvgl_port_init(void)
         return ESP_FAIL;
     }
 
-    /* 4. Регистрируем дисплей в LVGL */
+    /* 5. Регистрируем дисплей в LVGL */
     static lv_disp_draw_buf_t disp_buf;
     lv_disp_draw_buf_init(&disp_buf, draw_buf1, draw_buf2, DRAW_BUF_SIZE);
 
@@ -56,16 +73,4 @@ esp_err_t lvgl_port_init(void)
 
     ESP_LOGI(TAG, "LVGL port initialized (%dx%d)", LCD_WIDTH, LCD_HEIGHT);
     return ESP_OK;
-}
-
-void lvgl_port_task(void *arg)
-{
-    (void)arg;
-
-    ESP_LOGI(TAG, "LVGL task started");
-
-    while (1) {
-        lv_timer_handler();
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
 }

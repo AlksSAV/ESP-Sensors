@@ -2,7 +2,7 @@
  * Waveshare ESP32-C6-LCD-1.47 Sensor Display Demo
  * 
  * Отображает на дисплее:
- *   - Температура (встроенный термометр ESP32-C6)
+ *   - Температура (демо-значение, 25°C)
  *   - Относительная влажность (демо-значение, 45%)
  *   - Абсолютная влажность (расчётная по формуле)
  *   - Давление (демо-значение, 1013.25 hPa)
@@ -17,13 +17,23 @@
 #include "display_driver.h"
 #include "lvgl_port.h"
 
+/* Декларация используемых шрифтов (LVGL v8 требует LV_FONT_DECLARE) */
+LV_FONT_DECLARE(lv_font_montserrat_16);
+LV_FONT_DECLARE(lv_font_montserrat_20);
+
 static const char *TAG = "main";
 
 #define UPDATE_INTERVAL_MS 2000
 
-/* Демо-данные (замените на реальные при подключении SHT45 и BMP581) */
+/* Демо-данные */
 static float demo_rel_humidity = 45.0f;     // %RH
 static float demo_pressure     = 1013.25f;  // hPa
+
+/* Указатели на метки (для обновления из таймера) */
+static lv_obj_t *t_label  = NULL;
+static lv_obj_t *h_label  = NULL;
+static lv_obj_t *ah_label = NULL;
+static lv_obj_t *p_label  = NULL;
 
 /*
  * Расчёт абсолютной влажности (г/м³):
@@ -37,28 +47,49 @@ static float calc_absolute_humidity(float temp_c, float rel_humidity)
     return (2.1674f * e) / (273.15f + temp_c);
 }
 
+/* Callback таймера LVGL — обновляет данные каждые 2 секунды */
+static void sensor_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    static float temp_c = 26.0f;
+    char buf[48];
+
+    float ah = calc_absolute_humidity(temp_c, demo_rel_humidity);
+
+    snprintf(buf, sizeof(buf), "T: %+.1f C", temp_c);
+    lv_label_set_text(t_label, buf);
+
+    snprintf(buf, sizeof(buf), "RH: %.1f %%", demo_rel_humidity);
+    lv_label_set_text(h_label, buf);
+
+    snprintf(buf, sizeof(buf), "AH: %.2f g/m3", ah);
+    lv_label_set_text(ah_label, buf);
+
+    snprintf(buf, sizeof(buf), "P: %.1f hPa", demo_pressure);
+    lv_label_set_text(p_label, buf);
+}
+
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "=== ESP32-C6 Sensor Display Demo ===");
 
-    /* 1. Дисплей + LVGL */
+    /* 1. Дисплей + LVGL (без запуска задачи!) */
     if (lvgl_port_init() != ESP_OK) {
         ESP_LOGE(TAG, "LVGL init failed");
         return;
     }
 
-    /* Запускаем задачу LVGL */
-    xTaskCreate(lvgl_port_task, "lvgl", 4096, NULL, 5, NULL);
-
-    /* 2. UI */
+    /* 2. Создаём UI ПОСЛЕ инициализации, ДО запуска lv_timer_handler */
     lv_obj_t *scr = lv_scr_act();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x0A0A1A), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
     /* Заголовок */
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "ESP32-C6 Monitor");
     lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 12);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
 
     /* Разделитель */
     lv_obj_t *sep = lv_line_create(scr);
@@ -69,28 +100,32 @@ extern "C" void app_main(void)
     lv_obj_align(sep, LV_ALIGN_TOP_MID, 0, 36);
 
     /* Строка 1 — Температура */
-    lv_obj_t *t_label = lv_label_create(scr);
+    t_label = lv_label_create(scr);
     lv_label_set_text(t_label, "T: --.- C");
     lv_obj_set_style_text_color(t_label, lv_color_hex(0xFF7777), LV_PART_MAIN);
-    lv_obj_align(t_label, LV_ALIGN_TOP_LEFT, 15, 55);
+    lv_obj_set_style_text_font(t_label, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_align(t_label, LV_ALIGN_TOP_LEFT, 12, 52);
 
     /* Строка 2 — Относительная влажность */
-    lv_obj_t *h_label = lv_label_create(scr);
+    h_label = lv_label_create(scr);
     lv_label_set_text(h_label, "RH: --.- %");
     lv_obj_set_style_text_color(h_label, lv_color_hex(0x77AAFF), LV_PART_MAIN);
-    lv_obj_align(h_label, LV_ALIGN_TOP_LEFT, 15, 85);
+    lv_obj_set_style_text_font(h_label, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_align(h_label, LV_ALIGN_TOP_LEFT, 12, 88);
 
     /* Строка 3 — Абсолютная влажность */
-    lv_obj_t *ah_label = lv_label_create(scr);
+    ah_label = lv_label_create(scr);
     lv_label_set_text(ah_label, "AH: --.- g/m3");
     lv_obj_set_style_text_color(ah_label, lv_color_hex(0x77DDAA), LV_PART_MAIN);
-    lv_obj_align(ah_label, LV_ALIGN_TOP_LEFT, 15, 115);
+    lv_obj_set_style_text_font(ah_label, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_align(ah_label, LV_ALIGN_TOP_LEFT, 12, 124);
 
     /* Строка 4 — Давление */
-    lv_obj_t *p_label = lv_label_create(scr);
+    p_label = lv_label_create(scr);
     lv_label_set_text(p_label, "P: ---.- hPa");
     lv_obj_set_style_text_color(p_label, lv_color_hex(0xFFBB66), LV_PART_MAIN);
-    lv_obj_align(p_label, LV_ALIGN_TOP_LEFT, 15, 145);
+    lv_obj_set_style_text_font(p_label, &lv_font_montserrat_20, LV_PART_MAIN);
+    lv_obj_align(p_label, LV_ALIGN_TOP_LEFT, 12, 160);
 
     /* Подпись внизу */
     lv_obj_t *footer = lv_label_create(scr);
@@ -98,29 +133,14 @@ extern "C" void app_main(void)
     lv_obj_set_style_text_color(footer, lv_color_hex(0x444466), LV_PART_MAIN);
     lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -10);
 
-    char buf[48];
-    float temp_c = 25.0f;
+    /* 3. Таймер LVGL для обновления данных (без гонки — в контексте LVGL) */
+    lv_timer_create(sensor_timer_cb, UPDATE_INTERVAL_MS, NULL);
 
-    ESP_LOGI(TAG, "UI ready. Update every %d ms", UPDATE_INTERVAL_MS);
+    ESP_LOGI(TAG, "UI ready. Starting LVGL loop");
 
-    /* 3. Главный цикл */
+    /* 4. Главный цикл — lv_timer_handler в той же задаче */
     while (1) {
-        /* Расчёт абсолютной влажности */
-        float ah = calc_absolute_humidity(temp_c, demo_rel_humidity);
-
-        /* Обновляем дисплей */
-        snprintf(buf, sizeof(buf), "T: %+.1f C", temp_c);
-        lv_label_set_text(t_label, buf);
-
-        snprintf(buf, sizeof(buf), "RH: %.1f %%", demo_rel_humidity);
-        lv_label_set_text(h_label, buf);
-
-        snprintf(buf, sizeof(buf), "AH: %.2f g/m3", ah);
-        lv_label_set_text(ah_label, buf);
-
-        snprintf(buf, sizeof(buf), "P: %.1f hPa", demo_pressure);
-        lv_label_set_text(p_label, buf);
-
-        vTaskDelay(pdMS_TO_TICKS(UPDATE_INTERVAL_MS));
+        lv_timer_handler();
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 }

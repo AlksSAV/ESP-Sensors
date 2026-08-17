@@ -6,7 +6,7 @@
 
 #include "display_driver.h"
 #include <esp_log.h>
-#include <esp_private/esp_gpio_reserve.h>
+#include <esp_heap_caps.h>
 #include <string.h>
 
 static const char *TAG = "display_driver";
@@ -26,7 +26,7 @@ static esp_err_t lcd_spi_write_command(uint8_t cmd)
         .length = 8,
         .tx_buffer = &cmd,
     };
-    return spi_device_transmit(spi_handle, &t);
+    return spi_device_polling_transmit(spi_handle, &t);
 }
 
 static esp_err_t lcd_spi_write_data(const uint8_t *data, size_t len)
@@ -37,7 +37,7 @@ static esp_err_t lcd_spi_write_data(const uint8_t *data, size_t len)
         .length = len * 8,
         .tx_buffer = data,
     };
-    return spi_device_transmit(spi_handle, &t);
+    return spi_device_polling_transmit(spi_handle, &t);
 }
 
 /* ---------- Инициализация ST7789 ---------- */
@@ -95,6 +95,50 @@ static esp_err_t lcd_init_commands(void)
 
 /* ---------- Публичный API ---------- */
 
+/* Заливка экрана одним цветом (RGB565) ПОЛОСАМИ по 40 строк,
+ * чтобы не превышать аппаратный лимит SPI (16KB) */
+static void lcd_fill_screen(uint16_t color)
+{
+    size_t stripe_w = LCD_WIDTH;          /* 172 */
+    size_t stripe_h = 40;                 /* строк за раз */
+    size_t px = stripe_w * stripe_h;      /* 6880 пикселей */
+    uint16_t *buf = (uint16_t *)heap_caps_malloc(px * sizeof(uint16_t), MALLOC_CAP_DMA);
+    if (!buf) {
+        ESP_LOGE(TAG, "fill: no DMA mem");
+        return;
+    }
+    for (size_t i = 0; i < px; i++) {
+        buf[i] = color;
+    }
+
+    for (uint16_t y = 0; y < LCD_HEIGHT; y += stripe_h) {
+        uint16_t h = (y + stripe_h <= LCD_HEIGHT) ? stripe_h : (LCD_HEIGHT - y);
+        uint16_t x1 = LCD_OFFSET_X;
+        uint16_t x2 = LCD_OFFSET_X + LCD_WIDTH - 1;
+        uint16_t y1 = LCD_OFFSET_Y + y;
+        uint16_t y2 = LCD_OFFSET_Y + y + h - 1;
+
+        lcd_spi_write_command(0x2A);
+        uint8_t col[4] = { (uint8_t)(x1 >> 8), (uint8_t)(x1 & 0xFF), (uint8_t)(x2 >> 8), (uint8_t)(x2 & 0xFF) };
+        lcd_spi_write_data(col, 4);
+
+        lcd_spi_write_command(0x2B);
+        uint8_t row[4] = { (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF), (uint8_t)(y2 >> 8), (uint8_t)(y2 & 0xFF) };
+        lcd_spi_write_data(row, 4);
+
+        lcd_spi_write_command(0x2C);
+        lcd_dc_control(true);
+
+        spi_transaction_t t = {
+            .length = stripe_w * h * 16,
+            .tx_buffer = buf,
+        };
+        esp_err_t e = spi_device_polling_transmit(spi_handle, &t);
+        if (e != ESP_OK) ESP_LOGE(TAG, "fill stripe y=%u err=%d", y, e);
+    }
+    heap_caps_free(buf);
+}
+
 esp_err_t display_init(void)
 {
     ESP_LOGI(TAG, "Initializing SPI bus for LCD");
@@ -105,7 +149,7 @@ esp_err_t display_init(void)
     bus_cfg.sclk_io_num = (gpio_num_t)LCD_PIN_SCLK;
     bus_cfg.quadwp_io_num = -1;
     bus_cfg.quadhd_io_num = -1;
-    bus_cfg.max_transfer_sz = LCD_WIDTH * LCD_HEIGHT * sizeof(uint16_t);
+    bus_cfg.max_transfer_sz = LCD_WIDTH * 40 * sizeof(uint16_t); /* 172*40*2 = 13760 байт */
     ESP_ERROR_CHECK(spi_bus_initialize(LCD_HOST_SPI, &bus_cfg, SPI_DMA_CH_AUTO));
 
     spi_device_interface_config_t dev_cfg = {};
@@ -164,12 +208,6 @@ esp_err_t display_backlight_set(uint8_t brightness)
             .clk_cfg         = LEDC_AUTO_CLK,
         };
         ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
-
-        /* Освобождаем GPIO22, если его кто-то зарезервировал */
-        if (esp_gpio_is_reserved(BIT64(LCD_PIN_BL))) {
-            ESP_LOGW(TAG, "GPIO%d was reserved, revoking for LEDC", LCD_PIN_BL);
-            esp_gpio_revoke(BIT64(LCD_PIN_BL));
-        }
 
         ESP_ERROR_CHECK(ledc_channel_config(&ledc_conf));
         ledc_initialized = true;
