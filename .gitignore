@@ -1,9 +1,8 @@
 # PlatformIO
-.platformio/
+.pio/
 *.o
 *.d
 *.elf
-*.bin
 *.map
 *.sig
 *.a
@@ -17,12 +16,16 @@
 *.swo
 *~
 
-# SDK config overrides
+# SDK config (generated) — но sdkconfig.defaults отслеживается
 sdkconfig*
+!sdkconfig.defaults
 
-# Build artifacts
-build/
-dist/
+# Автогенерируемые CMakeLists для src/
+src/CMakeLists.txt
+
+# Build artifacts (временные логи)
+build_log.txt
+dependencies.lock
 
 # OS files
 .DS_Store
