@@ -2,10 +2,14 @@
  * Waveshare ESP32-C6-LCD-1.47 Sensor Display Demo
  * 
  * Отображает на дисплее:
- *   - Температура (демо-значение, 25°C)
+ *   - Температура (демо-значение, 26°C)
  *   - Относительная влажность (демо-значение, 45%)
  *   - Абсолютная влажность (расчётная по формуле)
  *   - Давление (демо-значение, 1013.25 hPa)
+ *
+ * Веб-сервер на порту 80:
+ *   / — HTML страница с данными
+ *   /api/sensors — JSON API
  *
  * Когда подключишь SHT45 и BMP581 — заменишь демо-данные на реальные.
  */
@@ -16,6 +20,7 @@
 #include <freertos/task.h>
 #include "display_driver.h"
 #include "lvgl_port.h"
+#include "web_server.h"
 
 /* Декларация используемых шрифтов (LVGL v8 требует LV_FONT_DECLARE) */
 LV_FONT_DECLARE(lv_font_montserrat_16);
@@ -25,9 +30,13 @@ static const char *TAG = "main";
 
 #define UPDATE_INTERVAL_MS 2000
 
-/* Демо-данные */
-static float demo_rel_humidity = 45.0f;     // %RH
-static float demo_pressure     = 1013.25f;  // hPa
+/* Общие данные сенсоров (для дисплея и веб-сервера) */
+static sensor_data_t sensor_data = {
+    .temperature = 26.0f,
+    .relative_humidity = 45.0f,
+    .absolute_humidity = 0.0f,
+    .pressure = 1013.25f
+};
 
 /* Указатели на метки (для обновления из таймера) */
 static lv_obj_t *t_label  = NULL;
@@ -51,21 +60,25 @@ static float calc_absolute_humidity(float temp_c, float rel_humidity)
 static void sensor_timer_cb(lv_timer_t *t)
 {
     (void)t;
-    static float temp_c = 26.0f;
     char buf[48];
 
-    float ah = calc_absolute_humidity(temp_c, demo_rel_humidity);
+    /* Обновляем общие данные */
+    sensor_data.absolute_humidity = calc_absolute_humidity(
+        sensor_data.temperature,
+        sensor_data.relative_humidity
+    );
 
-    snprintf(buf, sizeof(buf), "T: %+.1f C", temp_c);
+    /* Дисплей */
+    snprintf(buf, sizeof(buf), "T: %+.1f C", sensor_data.temperature);
     lv_label_set_text(t_label, buf);
 
-    snprintf(buf, sizeof(buf), "RH: %.1f %%", demo_rel_humidity);
+    snprintf(buf, sizeof(buf), "RH: %.1f %%", sensor_data.relative_humidity);
     lv_label_set_text(h_label, buf);
 
-    snprintf(buf, sizeof(buf), "AH: %.2f g/m3", ah);
+    snprintf(buf, sizeof(buf), "AH: %.2f g/m3", sensor_data.absolute_humidity);
     lv_label_set_text(ah_label, buf);
 
-    snprintf(buf, sizeof(buf), "P: %.1f hPa", demo_pressure);
+    snprintf(buf, sizeof(buf), "P: %.1f hPa", sensor_data.pressure);
     lv_label_set_text(p_label, buf);
 }
 
@@ -138,7 +151,12 @@ extern "C" void app_main(void)
 
     ESP_LOGI(TAG, "UI ready. Starting LVGL loop");
 
-    /* 4. Главный цикл — lv_timer_handler в той же задаче */
+    /* 4. Инициализация веб-сервера (Wi-Fi + HTTP) */
+    ESP_LOGI(TAG, "Starting web server...");
+    web_server_init(NULL, NULL, &sensor_data);
+    ESP_LOGI(TAG, "Web server ready. Check http://<IP>/");
+
+    /* 5. Главный цикл — lv_timer_handler в той же задаче */
     while (1) {
         lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(5));
