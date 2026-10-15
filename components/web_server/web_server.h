@@ -15,3 +15,4 @@
 
 esp_err_t web_server_init(const char *ssid, const char *password, sensor_data_t *sd);
 void web_server_get_sensors(sensor_data_t *out);
+void web_server_set_sensors(const sensor_data_t *sd);

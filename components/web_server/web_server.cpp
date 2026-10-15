@@ -12,14 +12,26 @@
 #include <esp_netif.h>
 #include <lwip/err.h>
 #include <string.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 static const char *TAG = "web_server";
 #define WIFI_SSID       "Bertovic"
 #define WIFI_PASS       "18072019"
 #define MAX_RETRY       10
 
-static sensor_data_t *g_sensor_data = NULL;
+static sensor_data_t g_sensor_data = {0};
 static httpd_handle_t http_server_handle = NULL;
+/* Мьютекс защищает g_sensor_data: запись из LVGL-задачи, чтение из httpd-задачи */
+static SemaphoreHandle_t sensor_mutex = NULL;
+
+static inline void sensor_lock(void) {
+    if (sensor_mutex) xSemaphoreTake(sensor_mutex, portMAX_DELAY);
+}
+
+static inline void sensor_unlock(void) {
+    if (sensor_mutex) xSemaphoreGive(sensor_mutex);
+}
 
 static const char HTML_PAGE[] =
 "<!DOCTYPE html>"
@@ -90,12 +102,14 @@ static esp_err_t root_handler(httpd_req_t *req) {
 }
 
 static esp_err_t sensors_handler(httpd_req_t *req) {
-    if (g_sensor_data == NULL) { httpd_resp_send_500(req); return ESP_OK; }
+    /* Копируем снимок под мьютексом, форматирование — вне секции */
+    sensor_data_t snapshot;
+    web_server_get_sensors(&snapshot);
     char json[128];
     snprintf(json, sizeof(json),
         "{\"temp\":%.1f,\"rh\":%.1f,\"ah\":%.2f,\"pres\":%.1f}",
-        g_sensor_data->temperature, g_sensor_data->relative_humidity,
-        g_sensor_data->absolute_humidity, g_sensor_data->pressure);
+        snapshot.temperature, snapshot.relative_humidity,
+        snapshot.absolute_humidity, snapshot.pressure);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, json);
     return ESP_OK;
@@ -163,7 +177,19 @@ static esp_err_t wifi_init_sta(void) {
 }
 
 static esp_err_t http_server_start(sensor_data_t *sdata) {
-    g_sensor_data = sdata;
+    sensor_mutex = xSemaphoreCreateMutex();
+    if (sensor_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create sensor mutex");
+        return ESP_FAIL;
+    }
+    /* Начальное значение */
+    sensor_lock();
+    g_sensor_data.temperature = sdata->temperature;
+    g_sensor_data.relative_humidity = sdata->relative_humidity;
+    g_sensor_data.absolute_humidity = sdata->absolute_humidity;
+    g_sensor_data.pressure = sdata->pressure;
+    sensor_unlock();
+
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.task_priority = 5;
     config.stack_size = 4096;
@@ -194,7 +220,15 @@ esp_err_t web_server_init(const char *ssid, const char *password, sensor_data_t 
 }
 
 void web_server_get_sensors(sensor_data_t *out) {
-    if (g_sensor_data != NULL && out != NULL) {
-        *out = *g_sensor_data;
-    }
+    if (out == NULL) return;
+    sensor_lock();
+    *out = g_sensor_data;
+    sensor_unlock();
+}
+
+void web_server_set_sensors(const sensor_data_t *sd) {
+    if (sd == NULL) return;
+    sensor_lock();
+    g_sensor_data = *sd;
+    sensor_unlock();
 }

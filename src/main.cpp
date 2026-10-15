@@ -62,11 +62,14 @@ static void sensor_timer_cb(lv_timer_t *t)
     (void)t;
     char buf[48];
 
-    /* Обновляем общие данные */
+    /* Обновляем данные (эта задача — единственный производитель) */
     sensor_data.absolute_humidity = calc_absolute_humidity(
         sensor_data.temperature,
         sensor_data.relative_humidity
     );
+
+    /* Публикуем снимок для веб-сервера (защищённый доступ внутри компонента) */
+    web_server_set_sensors(&sensor_data);
 
     /* Дисплей */
     snprintf(buf, sizeof(buf), "T: %+.1f C", sensor_data.temperature);
