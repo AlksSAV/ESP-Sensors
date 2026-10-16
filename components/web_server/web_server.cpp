@@ -16,8 +16,9 @@
 #include <freertos/semphr.h>
 
 static const char *TAG = "web_server";
-#define WIFI_SSID       "Bertovic"
-#define WIFI_PASS       "18072019"
+/* Значения Wi-Fi по умолчанию; могут быть переопределены параметрами web_server_init() */
+static char WIFI_SSID[33] = "Bertovic";
+static char WIFI_PASS[65] = "18072019";
 #define MAX_RETRY       10
 
 static sensor_data_t g_sensor_data = {0};
